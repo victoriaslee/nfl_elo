@@ -162,6 +162,195 @@ match_up_results
 ```
 
 ```{r}
+#This code chunk computes the frame.id in which a block is initiated within the 
+#rusher-blocker match ups identified already. Key parameters are the number of 
+#frames cut post-snap (inclusive) and the distance threshold for a block to be initiated.
+
+match_up_pairs <- match_up_results %>%
+  select(rusher_nflId, ol_nflId) %>%
+  distinct()
+
+relevant_ids <- c(match_up_pairs$rusher_nflId,
+                  match_up_pairs$ol_nflId) %>% 
+  unique()
+
+post_snap_small <- post_snap_play %>%
+  filter(nflId %in% relevant_ids)
+
+k <- 3
+
+early_frames <- post_snap_small %>%
+  distinct(frame.id) %>%
+  arrange(frame.id) %>%
+  slice_head(n = k) %>%
+  pull(frame.id)
+
+r_trk <- post_snap_small %>%
+  filter(nflId %in% match_up_pairs$rusher_nflId) %>%
+  select(frame.id, rusher_nflId = nflId, rx = x, ry = y)
+
+o_trk <- post_snap_small %>%
+  filter(nflId %in% match_up_pairs$ol_nflId) %>%
+  select(frame.id, ol_nflId     = nflId, ox = x, oy = y)
+
+pair_dist <- match_up_pairs %>%
+  inner_join(r_trk, by = "rusher_nflId") %>%
+  inner_join(o_trk, by = c("ol_nflId", "frame.id")) %>%
+  mutate(
+    gap = sqrt((rx - ox)^2 + (ry - oy)^2)
+  )
+
+threshold   <- 1.5
+
+block_start <- pair_dist %>%
+  filter(!frame.id %in% early_frames) %>%    
+  filter(gap <= threshold) %>%                
+  group_by(rusher_nflId, ol_nflId) %>%
+  slice_min(frame.id, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(rusher_nflId, ol_nflId, block_start = frame.id)
+
+block_start_long <- block_start %>%
+  pivot_longer(
+    cols      = c(rusher_nflId, ol_nflId),
+    names_to  = "role",
+    values_to = "nflId"
+  ) %>%
+  select(nflId, block_start)
+
+post_snap_play_annotated <- post_snap_play %>%
+  left_join(block_start_long, by = "nflId") %>%
+  filter(!is.na(block_start)) %>%               
+  filter(frame.id >= block_start)
+
+post_snap_play_annotated <- bind_rows(
+  post_snap_play_annotated,
+  post_snap_play %>%
+    filter(PositionAbbr == "QB") %>%
+    semi_join(post_snap_play_annotated, by = "frame.id")
+)
+```
+
+```{r}
+rusher_vel_all <- post_snap_play_annotated %>%
+  filter(nflId %in% match_up_pairs$rusher_nflId) %>%
+  select(frame.id, rusher_nflId = nflId, s, dir) %>%
+  mutate(
+    dir_rad = dir * pi/180,
+    vx_r    = s * cos(dir_rad),
+    vy_r    = s * sin(dir_rad)
+  ) %>%
+  select(frame.id, rusher_nflId, vx_r, vy_r)
+
+# 2) QB velocities (all frames)
+qb_vel_all <- post_snap_play_annotated %>%
+  filter(PositionAbbr == "QB") %>%
+  select(frame.id, s, dir) %>%
+  mutate(
+    dir_rad = dir * pi/180,
+    vx_q    = s * cos(dir_rad),
+    vy_q    = s * sin(dir_rad)
+  ) %>%
+  distinct(frame.id, .keep_all = TRUE) %>%   # one row per frame
+  select(frame.id, vx_q, vy_q)
+
+# 3) Inner‐join to get only the frames present in both
+rel_vel_all <- rusher_vel_all %>%
+  inner_join(qb_vel_all, by = "frame.id") %>%
+  mutate(
+    rel_vx    = vx_r - vx_q,
+    rel_vy    = vy_r - vy_q,
+    rel_speed = sqrt(rel_vx^2 + rel_vy^2)
+  )
+
+rel_vel_all
+```
+```{r}
+rel_vel_all %>%
+  filter(rusher_nflId == 2495116) %>%
+  ggplot(aes(x = frame.id, y = rel_speed)) +
+    geom_line(color = "steelblue") +
+    geom_point(color = "steelblue", size = 1) +
+    labs(
+      title = "Rusher 2495116: Relative Speed to QB by Frame",
+      x     = "Frame ID",
+      y     = "Relative Speed (m/frame)"
+    ) +
+    theme_minimal()
+
+rel_vel_all %>%
+  filter(rusher_nflId == 2540163) %>%
+  ggplot(aes(x = frame.id, y = rel_speed)) +
+    geom_line(color = "steelblue") +
+    geom_point(color = "steelblue", size = 1) +
+    labs(
+      title = "Rusher 2495116: Relative Speed to QB by Frame",
+      x     = "Frame ID",
+      y     = "Relative Speed (m/frame)"
+    ) +
+    theme_minimal()
+
+rel_vel_all %>%
+  filter(rusher_nflId == 2556369) %>%
+  ggplot(aes(x = frame.id, y = rel_speed)) +
+    geom_line(color = "steelblue") +
+    geom_point(color = "steelblue", size = 1) +
+    labs(
+      title = "Rusher 2495116: Relative Speed to QB by Frame",
+      x     = "Frame ID",
+      y     = "Relative Speed (m/frame)"
+    ) +
+    theme_minimal()
+```
+
+```{r}
+r_trk <- post_snap_play_annotated %>%
+  filter(nflId %in% match_up_pairs$rusher_nflId) %>%
+  select(frame.id, rusher_nflId = nflId, rx = x, ry = y)
+
+o_trk <- post_snap_play_annotated %>%
+  filter(nflId %in% match_up_pairs$ol_nflId) %>%
+  select(frame.id, ol_nflId     = nflId, ox = x, oy = y)
+
+strain_per_frame <- match_up_pairs %>%
+  inner_join(r_trk, by = "rusher_nflId") %>%
+  inner_join(o_trk, by = c("ol_nflId","frame.id")) %>%
+  arrange(rusher_nflId, ol_nflId, frame.id) %>%
+  group_by(rusher_nflId, ol_nflId) %>%
+  mutate(
+    gap        = sqrt((rx - ox)^2 + (ry - oy)^2),
+    closure    = pmax(lag(gap) - gap, 0)
+  ) %>%
+  ungroup()
+
+strain_per_frame
+```
+
+```{r}
+strain_per_frame %>%
+  filter(rusher_nflId==2495116) %>%
+  ggplot(aes(x = frame.id, y = closure)) +
+  geom_point() +
+  theme_minimal()
+
+strain_per_frame %>%
+  filter(rusher_nflId==2540163) %>%
+  ggplot(aes(x = frame.id, y = closure)) +
+  geom_point() +
+  theme_minimal()
+
+strain_per_frame %>%
+  filter(rusher_nflId==2556369) %>%
+  ggplot(aes(x = frame.id, y = closure)) +
+  geom_point() +
+  theme_minimal()
+```
+
+
+
+
+
+```{r}
 early_frames <- frame_rush %>%
   distinct(frame.id) %>%
   arrange(frame.id) %>%
