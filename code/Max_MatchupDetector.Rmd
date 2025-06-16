@@ -20,6 +20,27 @@ pacman::p_load(tidyverse, dplyr, ggthemes, data.table, lubridate, glmnet,
 ```
 
 ```{r}
+
+tracking <- tracking |>
+  mutate(
+    x = ifelse(playDirection == "left", 120 - x, x),
+    y = ifelse(playDirection == "left", 160 / 3 - y, y),
+    dir = ifelse(playDirection == "left", dir + 180, dir),
+    dir = ifelse(dir > 360, dir - 360, dir),
+    o = ifelse(playDirection == "left", o + 180, o),
+    o = ifelse(o > 360, o - 360, o)
+  )
+```
+
+```{r}
+names(game_id)
+head(game_id)
+```
+
+```{r}
+```
+
+```{r}
 #load in the csv files
 games_data <- read_csv("/Users/maximiliangebauer/Downloads/games.csv") #game by game information
 players_data <- read_csv("/Users/maximiliangebauer/Downloads/players.csv") #player level information
@@ -232,6 +253,27 @@ post_snap_play_annotated <- bind_rows(
 ```
 
 ```{r}
+dater <- post_snap_play %>%
+  select(frame.id, rusher_nflId = nflId, s, dir) %>%
+  left_join(post_snap_play %>% select(rusher_nflId = nflId, displayName, dir, frame.id), by = c("rusher_nflId", "frame.id")) %>%
+  filter(displayName %in% c("Bennie Logan", "David Andrews")) %>%
+  unique()
+
+
+logan <- dater %>%
+  filter(displayName=="Bennie Logan")
+
+andrews <- dater %>%
+  filter(displayName=="David Andrews")
+
+dater
+
+dater %>%
+  group_by(frame.id) %>%
+  summarise(dir_dif = dir.x-dir.x)
+```
+
+```{r}
 rusher_vel_all <- post_snap_play_annotated %>%
   filter(nflId %in% match_up_pairs$rusher_nflId) %>%
   select(frame.id, rusher_nflId = nflId, s, dir) %>%
@@ -401,18 +443,92 @@ pair_distances
 ```
 
 
+```{r}
+tracking <- read.csv("/Users/maximiliangebauer/Downloads/nfl-big-data-bowl-2024/tracking_week_1.csv")
+plays <- read.csv("/Users/maximiliangebauer/Downloads/nfl-big-data-bowl-2024/plays.csv")
+players <- read.csv("/Users/maximiliangebauer/Downloads/nfl-big-data-bowl-2024/players.csv")
+games <- read.csv("/Users/maximiliangebauer/Downloads/nfl-big-data-bowl-2024/games.csv")
+```
+
+```{r}
+tracking <- tracking %>%
+  mutate(
+    x = ifelse(playDirection == "left", 120 - x, x),
+    y = ifelse(playDirection == "left", 160 / 3 - y, y),
+    dir = ifelse(playDirection == "left", dir + 180, dir),
+    dir = ifelse(dir > 360, dir - 360, dir),
+    o = ifelse(playDirection == "left", o + 180, o),
+    o = ifelse(o > 360, o - 360, o)
+  )
+```
+
+```{r}
+players <- players %>%
+  select(nflId,position,displayName)
+
+games <- games %>%
+  select(gameId, season, week, gameDate, homeTeamAbbr, visitorTeamAbbr)
+
+plays <- plays %>%
+  select(gameId, playId, playDescription, possessionTeam, defensiveTeam, yardlineSide, yardlineNumber,playResult,absoluteYardlineNumber,offenseFormation,offenseFormation,defendersInTheBox,foulName1, foulName2, foulNFLId1, foulNFLId2)
+
+tracking <- tracking %>%
+  select(-c(jerseyNumber,time))
+```
+
+
+```{r}
+tracking <- tracking %>%
+  left_join(plays, by = c("gameId", "playId")) %>%
+  left_join(players, by = "nflId") %>%
+  left_join(games, by = "gameId")
+```
+
+```{r}
+unique(tracking$event)
+```
+
+```{r}
+pass_plays <- tracking %>%
+  group_by(gameId,playId) %>%
+  filter(any(event %in% c("pass_forward", "pass_shovel", "pass_tipped", "qb_sack",
+                          "pass_outcome_touchdown", "pass_arrived",
+                          "pass_outcome_caught", "pass_outcome_incomplete", "play_action", "autoevent_passforward", "autoevent_passinterrupted"))) %>%
+  ungroup() %>%
+  filter(club!="football") #Need to learn what causes some real rows to be incomplete as such
+```
+
+```{r}
+head(pass_plays,50)
+```
+
+```{r}
+pass_plays2 <- pass_plays %>%
+  group_by(gameId,playId) %>%
+  filter(any(event %in% c("ball_snap", "autoevent_ballsnap"))) %>%
+  ungroup()
+
+nrow(pass_plays)
+nrow(pass_plays2)
+
+pass_plays %>%
+  summarise(total_plays = n_distinct(interaction(gameId, playId)))
+
+pass_plays2 %>%
+  summarise(total_plays = n_distinct(interaction(gameId, playId)))
+```
 
 
 
-
-
-
-
-
-
-
-
-
+```{r}
+post_snap_play <- sample_play %>%
+  arrange(frame.id) %>%                             
+  group_by(nflId) %>%                                
+  filter(                                          
+    cumsum(!is.na(event) & event == "ball_snap") > 0
+  ) %>%
+  ungroup()
+```
 
 
 
