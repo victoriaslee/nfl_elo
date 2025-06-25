@@ -589,10 +589,8 @@ learning_rate     <- 32
 scaling_parameter <- 400
 ```
 
-```{r}
-unique(interactions_pr$gameId)
-selected_games <- c("2021090900", "2021091200", "2021091201", "2021091202", "2021091203", "2021091204", "2021091205", "2021091206", "2021091207", "2021091208", "2021091209")
 
+```{r}
 elo_update_function <- function(blocker_elo, rusher_elo, learning_rate, scaling_parameter, outcome) {
   expected_blocker_win <- 1 / (1 + 10^((rusher_elo - blocker_elo) / scaling_parameter))
   expected_rusher_win <- 1 - expected_blocker_win
@@ -606,10 +604,7 @@ elo_update_function <- function(blocker_elo, rusher_elo, learning_rate, scaling_
   )
 }
 
-filtered_games <- interactions_pr %>%
-  filter(as.character(gameId) %in% as.character(selected_games))
-
-history <- filtered_games %>%
+history <- interactions_pr %>%
   mutate(
     before_blocker_elo = NA_real_,
     before_rusher_elo  = NA_real_,
@@ -617,38 +612,32 @@ history <- filtered_games %>%
     after_rusher_elo   = NA_real_
   )
 
+library(data.table)
+setDT(history)  #convert to data.table for faster reading 
+
 for (i in seq_len(nrow(history))) {
-  row    <- history[i, ]
-  b_id   <- as.character(row$blocker_nflId)
-  r_id   <- as.character(row$rusher_nflId)
-  out    <- row$outcome 
+  row <- history[i]
+  b_id <- as.character(row$blocker_nflId)
+  r_id <- as.character(row$rusher_nflId)
+  out  <- row$outcome
+  
+  b_elo <- elo_vec[b_id]
+  r_elo <- elo_vec[r_id]
+  
+  new_elos <- elo_update_function(b_elo, r_elo, learning_rate, scaling_parameter, out)
+  
+  set(history, i, "before_blocker_elo", b_elo)
+  set(history, i, "before_rusher_elo",  r_elo)
+  set(history, i, "after_blocker_elo",  new_elos$blocker_elo)
+  set(history, i, "after_rusher_elo",   new_elos$rusher_elo)
 
-  b_elo  <- elo_vec[b_id]
-  r_elo  <- elo_vec[r_id]
-
-  new_elos <- elo_update_function(
-    blocker_elo       = b_elo,
-    rusher_elo        = r_elo,
-    learning_rate     = learning_rate,
-    scaling_parameter = scaling_parameter,
-    outcome           = out
-  )
-
-  history$before_blocker_elo[i] <- b_elo
-  history$before_rusher_elo[i]  <- r_elo
   elo_vec[b_id] <- new_elos$blocker_elo
   elo_vec[r_id] <- new_elos$rusher_elo
-  history$after_blocker_elo[i]  <- new_elos$blocker_elo
-  history$after_rusher_elo[i]   <- new_elos$rusher_elo
 }
 
+fwrite(history, file = "elo_history.csv")
 ```
 
-```{r}
-str(interactions_pr$gameId)
-unique(as.character(interactions_pr$gameId))
-intersect(as.character(interactions_pr$gameId), as.character(selected_games))
-```
 
 ```{r}
 history2 <- history %>%
@@ -693,18 +682,19 @@ blocker_ids <- unique(interactions_pr$blocker_nflId)
 top_rushers <- players_elos %>%
   filter(nflId %in% rusher_ids) %>%
   arrange(desc(final_elo)) %>%
-  slice_head(n = 10)
+  slice_head(n = 15)
 
 top_blockers <- players_elos %>%
   filter(nflId %in% blocker_ids) %>%
   arrange(desc(final_elo)) %>%
-  slice_head(n = 10)
+  slice_head(n = 15)
 
 top_rushers
 top_blockers
 ```
 
 ```{r}
+library(PNWColors)
 history2 <- history %>%
   mutate(interaction = row_number())
 
@@ -715,14 +705,16 @@ elo_tracks <- bind_rows(
       interaction,
       nflId = as.character(blocker_nflId),
       elo   = after_blocker_elo,
-      role  = "blocker"
+      role  = "blocker",
+      officialPosition = officialPosition
     ),
   history2 %>%
     transmute(
       interaction,
       nflId = as.character(rusher_nflId),
       elo   = after_rusher_elo,
-      role  = "rusher"
+      role  = "rusher",
+      officialPosition = officialPosition
     )
 )
 tracks_named <- elo_tracks %>%
@@ -736,13 +728,15 @@ tracks_named <- elo_tracks %>%
 # 2) Top-10 rushers
 top_rusher_ids <- top_rushers %>% pull(nflId) %>% as.character()
 
-rusher_tracks <- tracks_named %>%
-  filter(role == "rusher", nflId %in% top_rusher_ids)
+rusher_tracks <- tracks_named %>% 
+  filter(role == "rusher", nflId %in% top_rusher_ids) %>% 
 
 ggplot(rusher_tracks, aes(x = interaction, y = elo, color = displayName)) +
   geom_line(size = 1) +
+  scale_color_manual(values = pnw_palette("Sailboat",15)) +
+  
   labs(
-    title = "Elo Trajectories of Top 10 Pass-Rushers",
+    title = "Elo Trajectories of Top 15 Pass-Rushers",
     x     = "Interaction #",
     y     = "Elo Rating",
     color = "Player"
@@ -754,12 +748,13 @@ ggplot(rusher_tracks, aes(x = interaction, y = elo, color = displayName)) +
 top_blocker_ids <- top_blockers %>% pull(nflId) %>% as.character()
 
 blocker_tracks <- tracks_named %>%
-  filter(role == "blocker", nflId %in% top_blocker_ids)
+  filter(role == "blocker", nflId %in% top_blocker_ids) %>% 
 
 ggplot(blocker_tracks, aes(x = interaction, y = elo, color = displayName)) +
   geom_line(size = 1) +
+  scale_color_manual(values = pnw_palette("Sailboat",15)) +
   labs(
-    title = "Elo Trajectories of Top 10 Blockers",
+    title = "Elo Trajectories of Top 15 Blockers",
     x     = "Interaction #",
     y     = "Elo Rating",
     color = "Player"
@@ -789,24 +784,15 @@ top_rushers_post
 ```
 
 ```{r}
-new_data <- fread("/Users/maximiliangebauer/Downloads/Hudl IQ data for Wharton School/Hudl IQ 2021 NFL Events.csv")
+
+new_data <- fread("../../nfl_data/10_sample_games.csv")
 ```
 
 ```{r}
 names(new_data)
 head(new_data)
 ```
-snap, engagement start, engagement end, 
-```{r}
-new_data %>%
-  filter(event_types %in% c("{\"\"Engagement Start\"\"}","{\"\"Engagement End\"\"}") & event_player_name=="Dexter Lawrence" & opponent_player_name=="Matt Hennessy")
-```
-sub_gameid <- game_id %>%
-  group_by(gameId,playId) %>%
-  filter(any(event %in% c("pass_forward", "pass_shovel", "pass_tipped", "qb_sack",
-                          "pass_outcome_touchdown", "pass_arrived", "qb_kneel",
-                          "pass_outcome_caught", "pass_outcome_incomplete"))) %>%
-  ungroup()
+
 ```{r}
 sample_game <- new_data %>%
   filter(game_id == 1069714)
@@ -826,16 +812,16 @@ sample_game %>%
   filter(play_uuid=="a0dc69e6-c5f9-4a81-a823-e92a3efc918c")
 ```
 
+Test whether matchup detection was correct within BDB data by comparing to hudl data 
+
 ```{r}
-head(new_data)
+matchups <- new_data %>% 
+  filter()
 ```
 
 ```{r}
-
+str(history)
 ```
-
-
-
-
-
+```{r}
+```
 
